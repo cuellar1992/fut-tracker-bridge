@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EA FC26 Tracker Bridge
 // @namespace    https://github.com/local/fut-tracker
-// @version      2.5
+// @version      2.6
 // @description  Auto-fills Transfer Market search from EA FC26 Tracker app (localhost:9876)
 // @author       local
 // @match        https://www.ea.com/ea-sports-fc/ultimate-team/web-app/*
@@ -184,11 +184,53 @@
         return true;
     }
 
+    // ── FC Artemis "Player ID" field ─────────────────────────────────────────
+    // When the FC Artemis extension is on, it puts a "Player ID (exact card)" field above
+    // the name search ([data-fca-card-id]); its id lives in Artemis, which adds the defId
+    // to the form's searches and shows an "Exact · …" chip. Drive it the way the user
+    // does: variant → type the id + `change` (what Artemis listens to); standard → press
+    // the chip's ✕ so an earlier id doesn't stay applied. Without Artemis nothing happens
+    // (our own searchTransferMarket wrapper still sets the defId).
+    const ARTEMIS_FIELD = '[data-fca-card-id]';
+
+    function waitForElement(selector, timeout = 2500) {
+        return new Promise(resolve => {
+            const start = Date.now();
+            (function check() {
+                const el = document.querySelector(selector);
+                if (el) return resolve(el);
+                if (Date.now() - start > timeout) return resolve(null);
+                setTimeout(check, 100);
+            })();
+        });
+    }
+
+    async function syncArtemisField(exactId) {
+        const box = await waitForElement(ARTEMIS_FIELD);
+        if (!box) return;
+        const clear = box.querySelector('button');  // only the chip has a button (its ✕)
+        if (!exactId) {
+            if (clear) clear.click();
+            return;
+        }
+        if (clear) {
+            if (box.textContent.includes(String(exactId))) return;  // already this card
+            clear.click();
+        }
+        const input = await waitForElement(`${ARTEMIS_FIELD} input`, 1500);
+        if (!input) return;
+        ni.call(input, String(exactId));
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+
     async function fill(data) {
         // Native path needs the EA ids (cards discovered before v2.5 have no rarity id
         // until the next "Resetear Todo").
         if (data.ea_id > 0 && Number.isInteger(data.rarity_id) && nativeReady()) {
-            if (nativeFill(data)) return;
+            if (nativeFill(data)) {
+                await syncArtemisField(VARIANTS.has(data.variant) ? data.ea_id : null);
+                return;
+            }
         }
         if (VARIANTS.has(data.variant)) {
             // The DOM form can't pick a variant: it would list standard cards at this price.
@@ -197,6 +239,7 @@
         }
         _exact = null;
         await domFill(data);
+        await syncArtemisField(null);
     }
 
     // Legacy DOM fill: types into the search form (only when the native path is unavailable).
@@ -277,5 +320,5 @@
     }
 
     scheduleNext(0);
-    console.log('[FUT Tracker] Bridge v2.5 active — native fetch() localhost:' + PORT);
+    console.log('[FUT Tracker] Bridge v2.6 active — native fetch() localhost:' + PORT);
 })();
