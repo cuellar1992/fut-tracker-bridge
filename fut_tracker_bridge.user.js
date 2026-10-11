@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EA FC26 Tracker Bridge
 // @namespace    https://github.com/local/fut-tracker
-// @version      2.6
+// @version      2.7
 // @description  Auto-fills Transfer Market search from EA FC26 Tracker app (localhost:9876)
 // @author       local
 // @match        https://www.ea.com/ea-sports-fc/ultimate-team/web-app/*
@@ -157,6 +157,22 @@
         return true;
     }
 
+    // How many screens to close so the new search takes the place of the open one:
+    // the last search screen and everything above it, when all of that is the
+    // search's own (its results). 0 from any other screen, so back returns there.
+    // EA's UTGameFlowNavigationController keeps its stack in childViewControllers
+    // (checked 2026-10-12; same rule as FC Artemis's openSearch).
+    function searchScreensOnTop(nav) {
+        const Filters = W.UTMarketSearchFiltersViewController;
+        const stack = nav.childViewControllers;
+        if (!Array.isArray(stack)) return nav.currentController instanceof Filters ? 1 : 0;
+        let last = -1;
+        stack.forEach((screen, i) => { if (screen instanceof Filters) last = i; });
+        if (last < 0) return 0;
+        const searchOwn = stack.slice(last + 1).every(s => /Search/.test(String(s?.constructor?.name)));
+        return searchOwn ? stack.length - last : 0;
+    }
+
     // Returns true when the search screen was opened.
     function nativeFill(data) {
         const exact = VARIANTS.has(data.variant);
@@ -178,6 +194,10 @@
         if (player && controller.viewmodel) controller.viewmodel.playerData = player;  // name box
 
         _exact = exact ? { id: data.ea_id, rarity: data.rarity_id } : null;
+        // Replace the open search instead of stacking one screen per card.
+        if (typeof nav.popViewController === 'function') {
+            for (let i = searchScreensOnTop(nav); i > 0; i--) nav.popViewController();
+        }
         nav.pushViewController(controller);
         console.log(`[FUT Tracker] search opened: ${data.name} rarity ${data.rarity_id} max ${data.max_buy_now}`
                     + (exact ? ` · exact ${data.variant} id ${data.ea_id}` : ''));
